@@ -3,9 +3,10 @@
 #include <iostream>
 #include <string>
 #include <cassert>
+#include <chrono>
 
 
-void game_of_life( int image_width, int image_height, bool *image, int steps )
+bool* game_of_life( int image_width, int image_height, bool *image, int steps, bool measure_update_time = false )
 {
     /*
     The image array is saved row major.
@@ -29,6 +30,14 @@ void game_of_life( int image_width, int image_height, bool *image, int steps )
         }
     }
 
+    // measure the starting time for the benchmark
+    std::chrono::steady_clock::time_point benchmark_begin, benchmark_end;
+    if( measure_update_time )
+    {
+        benchmark_begin = std::chrono::steady_clock::now();
+        std::cout << "\n---- Benchmark of game_of_life ----" << std::endl;
+        std::cout << "starting time measurement" << std::endl;
+    }
     for( int i = 0; i < steps; i++ )
     {
         // find out which image is used for reading and which for writing in this iteration
@@ -69,18 +78,30 @@ void game_of_life( int image_width, int image_height, bool *image, int steps )
         }
     }
 
-    // finally, we have to copy the result back to the input array
+    // measure the finish time and calculate the avg time per iteration
+    if( measure_update_time )
+    {
+        benchmark_end = std::chrono::steady_clock::now();
+        std::cout << "finished time measurement" << std::endl;
+        std::cout << "total elapsed time: " << std::chrono::duration_cast<std::chrono::milliseconds>(benchmark_end - benchmark_begin).count() << " milliseconds" << std::endl;
+        std::cout << "time per iteration: " << std::chrono::duration_cast<std::chrono::microseconds>(benchmark_end - benchmark_begin).count() / steps << " microseconds" << std::endl;
+    }
+
+    // finally, we have to copy the result to a new array and return it
+    bool* result = new bool[image_width * image_height];
     for( size_t y = 0; y < image_height; y++ )
     {
         for( size_t x = 0; x < image_width; x++ )
         {
-            image[y * image_width + x] = images[steps % 2][(y + 1) * width + (x + 1)];
+            result[y * image_width + x] = images[steps % 2][(y + 1) * width + (x + 1)];
         }
     }
 
     delete[] images[0];
     delete[] images[1];
     delete[] images;
+
+    return result;
 }
 
 
@@ -115,16 +136,16 @@ void run_test( std::string testname, std::string input_file, std::string expecte
     }
 
     // execute the game of life on the input
-    game_of_life(width, height, input, time_steps);
+    bool* result = game_of_life(width, height, input, time_steps);
 
     // debug: print the resulting image to the console
-    if( debug_print ) print_image(input, "RESULT", width, height);
+    if( debug_print ) print_image(result, "RESULT", width, height);
 
     // compare the result to the expected outcome
     int test_passed = true;
     for( size_t i = 0; i < width * height; i++ )
     {
-        if( ! input[i] == expected_outcome[i] )
+        if( ! result[i] == expected_outcome[i] )
         {
             std::cout << " !!> TEST FAILED: " << testname << std::endl;
             test_passed = false;
@@ -165,7 +186,13 @@ int main()
 {
     MPI_Init(NULL, NULL);
     
+    // running all tests to make sure that game_of_life works correctly
     test_game_of_life();
+
+    // benchmark the function by updating a 25'600 x 12'800 grid
+    int benchmark_width = 25600, benchmark_height = 12800;
+    bool* benchmark_input = new bool[benchmark_width * benchmark_height];
+    game_of_life( benchmark_width, benchmark_height, benchmark_input, 10, true );
 
     MPI_Finalize();
     return 0;

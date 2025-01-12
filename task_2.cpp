@@ -359,7 +359,7 @@ int main()
     //     parallel_game_of_life( "test_images/spacefiller_input.ppm", writename, i);
 
     // }
-    int iterations = 100;
+    int iterations = 100000;
     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
     parallel_game_of_life( "test_images/spacefiller_input.ppm", "test_images/output.ppm", iterations);
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
