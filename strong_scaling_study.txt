@@ -1,0 +1,6 @@
+strong scaling study with 1 processes, 1 iterations per image size and 100 time steps per calculation: 497662 milliseconds per calculation
+strong scaling study with 2 processes, 1 iterations per image size and 100 time steps per calculation: 254104 milliseconds per calculation
+strong scaling study with 4 processes, 1 iterations per image size and 100 time steps per calculation: 127784 milliseconds per calculation
+strong scaling study with 8 processes, 1 iterations per image size and 100 time steps per calculation: 64962 milliseconds per calculation
+strong scaling study with 16 processes, 1 iterations per image size and 100 time steps per calculation: 33322 milliseconds per calculation
+strong scaling study with 32 processes, 1 iterations per image size and 100 time steps per calculation: 17449 milliseconds per calculation

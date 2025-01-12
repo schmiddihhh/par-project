@@ -1,0 +1,6 @@
+weak scaling study with 1 processes, 1 iterations per image size and 100 time steps per calculation: 497843 milliseconds per calculation
+weak scaling study with 2 processes, 1 iterations per image size and 100 time steps per calculation: 497906 milliseconds per calculation
+weak scaling study with 4 processes, 1 iterations per image size and 100 time steps per calculation: 498482 milliseconds per calculation
+weak scaling study with 8 processes, 1 iterations per image size and 100 time steps per calculation: 498305 milliseconds per calculation
+weak scaling study with 16 processes, 1 iterations per image size and 100 time steps per calculation: 498493 milliseconds per calculation
+weak scaling study with 32 processes, 1 iterations per image size and 100 time steps per calculation: 515305 milliseconds per calculation

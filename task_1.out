@@ -1,0 +1,20 @@
+---- testing the game_of_life function ----
+starting test: dying cell
+ --> test passed: dying cell
+starting test: surviving cell
+ --> test passed: surviving cell
+starting test: resurrecting cell
+ --> test passed: resurrecting cell
+starting test: glider
+ --> test passed: glider
+starting test: periodic boundary
+ --> test passed: periodic boundary
+starting test: spacefiller
+ --> test passed: spacefiller
+---- finished testing the game_of_life function ----
+
+---- Benchmark of game_of_life ----
+starting time measurement
+finished time measurement
+total elapsed time: 99950 milliseconds
+time per iteration: 4997500 microseconds
