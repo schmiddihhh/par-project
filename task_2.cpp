@@ -42,8 +42,8 @@ void parallel_game_of_life( std::string input_path, std::string output_path, int
     int x_partitions = 1, y_partitions = 1;
     for( int splits = 0; splits < log2(comm_size); splits++ )
     {
-        if( image_width / x_partitions > image_height / y_partitions ) x_partitions++;
-        else y_partitions++;
+        if( image_width / x_partitions > image_height / y_partitions ) x_partitions *= 2;
+        else y_partitions *= 2;
     } 
 
     // next, every process needs to find its own partition
