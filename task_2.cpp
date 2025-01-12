@@ -20,68 +20,12 @@ void print_image( bool* image, std::string title, int width, int height )
 }
 
 
-void parallel_game_of_life( std::string input_path, std::string output_path, int steps )
+bool* parallel_game_of_life( int partition_width, int partition_height, bool* partial_image, int top_rank, int right_rank, int bottom_rank, int left_rank, int steps )
 {
-    // get the MPI rank information
-    int comm_size, rank;
-    MPI_Comm_size( MPI_COMM_WORLD,
-                   &comm_size );
-    MPI_Comm_rank( MPI_COMM_WORLD,
-                   &rank ); 
-    assert( (comm_size & (comm_size - 1)) == 0 );     // checks if comm_size is a power of 2
-
-    // read the image metadata from the image file
-    // we need these (at least the image width and height) to calculate a good partition of the image
-    int image_width, image_height, max_value;
-    size_t header_size;
-    read_header( input_path, &image_width, &image_height, &header_size, &max_value );
-
-    // we have to find a useful partition of the image into subgrids
-    // we only allow powers of 2 for the number of processes since that makes partitioning much easier
-    // the following loop calculates a partition where all parts have equal size (at least almost -> rounding)
-    int x_partitions = 1, y_partitions = 1;
-    for( int splits = 0; splits < log2(comm_size); splits++ )
-    {
-        if( image_width / x_partitions > image_height / y_partitions ) x_partitions *= 2;
-        else y_partitions *= 2;
-    } 
-
-    // next, every process needs to find its own partition
-    int x_partition_num = rank % x_partitions;
-    int y_partition_num = rank / x_partitions;
-
-    // calculate the width and height of the partitions
-    float avg_partition_width = image_width / x_partitions;
-    float avg_partition_height = image_height / y_partitions;
-
-    // map the partition to coordinates in the complete image
-    int x_start = x_partition_num * avg_partition_width;
-    int y_start = y_partition_num * avg_partition_height;
-    int x_end = x_partition_num == x_partitions - 1 ? image_width : (x_partition_num + 1) * avg_partition_width;
-    int y_end = y_partition_num == y_partitions - 1 ? image_height : (y_partition_num + 1) * avg_partition_height;
-    int partition_width = x_end - x_start;      // the value at x_end (or y_end, respectively) is excluded
-    int partition_height = y_end - y_start;
-
-    // find out which processes will calculate the adjacent partitions
-    // we need this for communicating with them
-    int top_rank = ( comm_size + rank - x_partitions ) % comm_size;
-    int bottom_rank = ( rank + x_partitions ) % comm_size;
-    int right_rank = y_partition_num * x_partitions + ( x_partition_num + 1 ) % x_partitions;
-    int left_rank = y_partition_num * x_partitions + ( x_partition_num + (x_partitions - 1) ) % x_partitions;
-
-    // read the part of the image that we need
-    bool* partial_image;
-    size_t pixel_size = max_value < 256 ? 1 : 2;
-    partial_image = read_partial_image( input_path,
-                                        header_size, 
-                                        partition_width, 
-                                        partition_height, 
-                                        y_start * image_width + x_start, 
-                                        image_width,
-                                        pixel_size );
-    
-    // // debug: print the read image
-    // if( rank == 0 ) print_image( partial_image, "before start image", partition_width, partition_height );
+    /*
+    This is the basic version of the game_of_life function.
+    It calculates the game of life by taking a bool array and its neighbor ranks as input and returning a bool array with the calculation result.
+    */
 
     // define the size of our partial image including the ghost cells
     int width = partition_width + 2, height = partition_height + 2;
@@ -230,6 +174,97 @@ void parallel_game_of_life( std::string input_path, std::string output_path, int
             }
         }
     }
+    
+    // finally, we have to remove our ghost cells from the result
+    bool* calc_result = images[steps % 2];
+    bool* result_image = new bool[partition_width * partition_height];
+    for( int y = 0; y < partition_height; y++ )
+    {
+        for( int x = 0; x < partition_width; x++ )
+        {
+            result_image[y * partition_width + x] = calc_result[(y + 1) * width + (x + 1)];
+        }
+    }
+
+    // delete all arrays that won't be needed anymore
+    delete[] top_bottom_send_requests;
+    delete[] top_bottom_recv_requests;
+    delete[] left_right_send_requests;
+    delete[] left_right_recv_requests;
+    delete[] images[0];
+    delete[] images[1];
+    delete[] images;
+
+    return result_image;
+}
+
+
+void parallel_game_of_life( std::string input_path, std::string output_path, int steps )
+{
+    /*
+    This implementation uses image files for input and output.
+    */
+
+    // get the MPI rank information
+    int comm_size, rank;
+    MPI_Comm_size( MPI_COMM_WORLD,
+                   &comm_size );
+    MPI_Comm_rank( MPI_COMM_WORLD,
+                   &rank ); 
+    assert( (comm_size & (comm_size - 1)) == 0 );     // checks if comm_size is a power of 2
+
+    // read the image metadata from the image file
+    // we need these (at least the image width and height) to calculate a good partition of the image
+    int image_width, image_height, max_value;
+    size_t header_size;
+    read_header( input_path, &image_width, &image_height, &header_size, &max_value );
+
+    // we have to find a useful partition of the image into subgrids
+    // we only allow powers of 2 for the number of processes since that makes partitioning much easier
+    // the following loop calculates a partition where all parts have equal size (at least almost -> rounding)
+    int x_partitions = 1, y_partitions = 1;
+    for( int splits = 0; splits < log2(comm_size); splits++ )
+    {
+        if( image_width / x_partitions > image_height / y_partitions ) x_partitions *= 2;
+        else y_partitions *= 2;
+    } 
+
+    // next, every process needs to find its own partition
+    int x_partition_num = rank % x_partitions;
+    int y_partition_num = rank / x_partitions;
+
+    // calculate the width and height of the partitions
+    float avg_partition_width = image_width / x_partitions;
+    float avg_partition_height = image_height / y_partitions;
+
+    // map the partition to coordinates in the complete image
+    int x_start = x_partition_num * avg_partition_width;
+    int y_start = y_partition_num * avg_partition_height;
+    int x_end = x_partition_num == x_partitions - 1 ? image_width : (x_partition_num + 1) * avg_partition_width;
+    int y_end = y_partition_num == y_partitions - 1 ? image_height : (y_partition_num + 1) * avg_partition_height;
+    int partition_width = x_end - x_start;      // the value at x_end (or y_end, respectively) is excluded
+    int partition_height = y_end - y_start;
+
+    // find out which processes will calculate the adjacent partitions
+    // we need this for communicating with them
+    int top_rank = ( comm_size + rank - x_partitions ) % comm_size;
+    int bottom_rank = ( rank + x_partitions ) % comm_size;
+    int right_rank = y_partition_num * x_partitions + ( x_partition_num + 1 ) % x_partitions;
+    int left_rank = y_partition_num * x_partitions + ( x_partition_num + (x_partitions - 1) ) % x_partitions;
+
+    // read the part of the image that we need
+    bool* partial_image;
+    size_t pixel_size = max_value < 256 ? 1 : 2;
+    partial_image = read_partial_image( input_path,
+                                        header_size, 
+                                        partition_width, 
+                                        partition_height, 
+                                        y_start * image_width + x_start, 
+                                        image_width,
+                                        pixel_size );
+
+    // this does the actual calculations
+    bool* calc_result = parallel_game_of_life( partition_width, partition_height, partial_image, top_rank, right_rank, bottom_rank, left_rank, steps );
 
     // finally, we have to write the result to the given output path
     // rank 0 writes the image header and broadcasts its size to all other processes
@@ -249,14 +284,7 @@ void parallel_game_of_life( std::string input_path, std::string output_path, int
                             MPI_COMM_WORLD );
     assert( status == MPI_SUCCESS );
 
-    bool* calc_result = images[steps % 2];
-    for( int y = 0; y < partition_height; y++ )
-    {
-        for( int x = 0; x < partition_width; x++ )
-        {
-            partial_image[y * partition_width + x] = calc_result[(y + 1) * width + (x + 1)];
-        }
-    }
+    
     write_partial_image( output_path,
                          partial_image,
                          header_size,
@@ -265,106 +293,160 @@ void parallel_game_of_life( std::string input_path, std::string output_path, int
                          y_start * image_width + x_start,
                          image_width );
 
-    // // erstmal debug print
-    // if( rank == 0 ) print_image( final_image, "final image", width, height );
+    return;
+}
+
+
+void benchmark_parallel_game_of_life( int image_width, int image_height, int steps )
+{
+    /*
+    This implementation uses an uninitialized array to start the calculations. 
+    The only use of this function is benchmarking the calculation speed.
+    */
+
+    // get the MPI rank information
+    int comm_size, rank;
+    MPI_Comm_size( MPI_COMM_WORLD,
+                   &comm_size );
+    MPI_Comm_rank( MPI_COMM_WORLD,
+                   &rank ); 
+    assert( (comm_size & (comm_size - 1)) == 0 );     // checks if comm_size is a power of 2
+
+    // we have to find a useful partition of the image into subgrids
+    // we only allow powers of 2 for the number of processes since that makes partitioning much easier
+    // the following loop calculates a partition where all parts have equal size (at least almost -> rounding)
+    int x_partitions = 1, y_partitions = 1;
+    for( int splits = 0; splits < log2(comm_size); splits++ )
+    {
+        if( image_width / x_partitions > image_height / y_partitions ) x_partitions *= 2;
+        else y_partitions *= 2;
+    } 
+
+    // next, every process needs to find its own partition
+    int x_partition_num = rank % x_partitions;
+    int y_partition_num = rank / x_partitions;
+
+    // calculate the width and height of the partitions
+    float avg_partition_width = image_width / x_partitions;
+    float avg_partition_height = image_height / y_partitions;
+
+    // map the partition to coordinates in the complete image
+    int x_start = x_partition_num * avg_partition_width;
+    int y_start = y_partition_num * avg_partition_height;
+    int x_end = x_partition_num == x_partitions - 1 ? image_width : (x_partition_num + 1) * avg_partition_width;
+    int y_end = y_partition_num == y_partitions - 1 ? image_height : (y_partition_num + 1) * avg_partition_height;
+    int partition_width = x_end - x_start;      // the value at x_end (or y_end, respectively) is excluded
+    int partition_height = y_end - y_start;
+
+    // find out which processes will calculate the adjacent partitions
+    // we need this for communicating with them
+    int top_rank = ( comm_size + rank - x_partitions ) % comm_size;
+    int bottom_rank = ( rank + x_partitions ) % comm_size;
+    int right_rank = y_partition_num * x_partitions + ( x_partition_num + 1 ) % x_partitions;
+    int left_rank = y_partition_num * x_partitions + ( x_partition_num + (x_partitions - 1) ) % x_partitions;
     
-    delete[] top_bottom_send_requests;
-    delete[] top_bottom_recv_requests;
-    delete[] left_right_send_requests;
-    delete[] left_right_recv_requests;
-    delete[] images[0];
-    delete[] images[1];
-    delete[] images;
+    bool* partial_image = new bool[partition_width * partition_height];
+
+    parallel_game_of_life( partition_width, partition_height, partial_image, top_rank, right_rank, bottom_rank, left_rank, steps );
+
+    // make sure that all processes wait for each other before finishing (important for time measuring)
+    int status = MPI_Barrier( MPI_COMM_WORLD );
+    assert( status == MPI_SUCCESS );
+
+    return;
 }
 
 
-void run_test( std::string testname, std::string input_file, std::string output_file, std::string expected_output_file, int time_steps, bool debug_print = false )
+void strong_scaling_study( int iterations_per_size, int time_steps )
 {
-    std::cout << "starting test: " << testname << std::endl;
-
-    // read the test files
-    bool* input, * output, * expected_outcome;
-    int width, height;
-    input = read_file(input_file, &width, &height);
-    expected_outcome = read_file(expected_output_file, &width, &height);
-
-    // debug: print the read files on the console
-    if( debug_print ) 
+    // first, measure the time for our calculations
+    int total_image_width = 25600, total_image_height = 12800;
+    std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+    for( int i = 0; i < iterations_per_size; i++ )
     {
-        print_image(input, "INPUT", width, height);
-        print_image(expected_outcome, "EXPECTED", width, height);
+        benchmark_parallel_game_of_life( total_image_width, total_image_height, time_steps );
     }
+    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
 
-    // execute the game of life on the input and read the resulting image
-    parallel_game_of_life( input_file, output_file, time_steps );
-    output = read_file( output_file, &width, &height );
+    int rank;
+    int status = MPI_Comm_rank( MPI_COMM_WORLD,
+                                &rank );
+    assert( status == MPI_SUCCESS );
 
-    // debug: print the resulting image to the console
-    if( debug_print ) print_image(output, "RESULT", width, height);
-
-    // compare the result to the expected outcome
-    int test_passed = true;
-    for( size_t i = 0; i < width * height; i++ )
+    if( rank == 0 )
     {
-        if( ! output[i] == expected_outcome[i] )
-        {
-            std::cout << " !!> TEST FAILED: " << testname << std::endl;
-            test_passed = false;
-            break;
-        }
-    }
-    if( test_passed ) std::cout << " --> test passed: " << testname << std::endl;
+        // calculate the tts
+        long total_millis = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
+        double milliseconds_per_iteration = total_millis / iterations_per_size;
 
-    delete[] input;
-    delete[] output;
-    delete[] expected_outcome;
+        // get the number of processes
+        int comm_size;
+        int status = MPI_Comm_size( MPI_COMM_WORLD,
+                                    &comm_size );
+        assert( status == MPI_SUCCESS );
+
+        // print all relevant information to the console
+        std::cout << "strong scaling study with " << comm_size << " processes, " << iterations_per_size << \
+                    " iterations per image size and " << time_steps << " time steps per calculation: " << milliseconds_per_iteration << " milliseconds per calculation" << std::endl;
+    }
 }
 
 
-void test_game_of_life( bool debug_print = false )
+void weak_scaling_study( int iterations_per_size, int time_steps )
 {
-    std::cout << "---- testing the game_of_life function ----" << std::endl;
+    // get the number of processes
+    int comm_size;
+    int status = MPI_Comm_size( MPI_COMM_WORLD,
+                                &comm_size );
+    assert( status == MPI_SUCCESS );
 
-    // test 1: a cell should die if it has less than 2 or more than 3 neighbors
-    run_test("dying cell", "test_images/dying_cell_input.ppm", "test_images/test_out.ppm", "test_images/dying_cell_1_step.ppm", 1, debug_print);
+    // make the image larger so every process gets the right size after partitioning
+    int total_image_width = 25600 * comm_size, total_image_height = 12800;
 
-    // test 2: a cell should stay alive if it has 2 or 3 neighbors
-    run_test("surviving cell", "test_images/surviving_cell_input.ppm", "test_images/test_out.ppm", "test_images/surviving_cell_1_step.ppm", 1, debug_print);
+    // measure the tts
+    std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+    for( int i = 0; i < iterations_per_size; i++ )
+    {
+        benchmark_parallel_game_of_life( total_image_width, total_image_height, time_steps );
+    }
+    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
 
-    // test 3: a cell should resurrect if it has exactly 3 neighbors
-    run_test("resurrecting cell", "test_images/resurrecting_cell_input.ppm", "test_images/test_out.ppm", "test_images/resurrecting_cell_1_step.ppm", 1, debug_print);
+    int rank;
+    status = MPI_Comm_rank( MPI_COMM_WORLD,
+                            &rank );
+    assert( status == MPI_SUCCESS );
 
-    // test 4: glider
-    run_test("glider", "test_images/glider_input.ppm", "test_images/test_out.ppm", "test_images/glider_4_steps.ppm", 4, debug_print);
+    if( rank == 0 )
+    {
+        // calculate the tts
+        long total_millis = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
+        double milliseconds_per_iteration = total_millis / iterations_per_size;
 
-    // test 5: periodic boundary (glider goes from bottom right corner to top left corner)
-    run_test("periodic boundary", "test_images/periodic_boundary_input.ppm", "test_images/test_out.ppm", "test_images/periodic_boundary_n_steps.ppm", 24, debug_print);
-
-    // test 6: spacefiller
-    run_test("spacefiller", "test_images/spacefiller_input.ppm", "test_images/test_out.ppm", "test_images/spacefiller_150_steps.ppm", 150, debug_print);
-
-    std::cout << "---- finished testing the game_of_life function ----" << std::endl;
+        // print all relevant information to the console
+        std::cout << "weak scaling study with " << comm_size << " processes, " << iterations_per_size << \
+                    " iterations per image size and " << time_steps << " time steps per calculation: " << milliseconds_per_iteration << " milliseconds per calculation" << std::endl;
+    }
 }
 
 
-int main()
+int main(int argc, char **argv)
 {
     MPI_Init(NULL, NULL);
 
-    test_game_of_life();
-
-    // for( int i = 0; i < 100; i++ )
-    // {
-    //     std::string writename = "test_images/arschlecken" + std::to_string(i) + ".ppm";
-    //     parallel_game_of_life( "test_images/spacefiller_input.ppm", writename, i);
-
-    // }
-    int iterations = 100000;
-    std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-    parallel_game_of_life( "test_images/spacefiller_input.ppm", "test_images/output.ppm", iterations);
-    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-    std::cout << "abs difference: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " milliseconds" << std::endl;
-    std::cout << "time per iteration: " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() / iterations << "microseconds" << std::endl;
+    // check the command line arguments
+    if( argc != 4 )
+    {
+        std::cout << "Usage: (--strong_scaling_study | --weak_scaling_study) <iterations_per_size> <time_steps>" << std::endl;
+        return 1;
+    }
+    if( strcmp(argv[1], "--strong_scaling_study") == 0 )
+    {
+        strong_scaling_study( std::stoi( argv[2] ), std::stoi( argv[3] ) );
+    }
+    if( strcmp(argv[1], "--weak_scaling_study") == 0 )
+    {
+        weak_scaling_study( std::stoi( argv[2] ), std::stoi( argv[3] ) );
+    }
 
     MPI_Finalize();
     return 0;
