@@ -7,19 +7,6 @@
 #include <chrono>
 
 
-void print_image( bool* image, std::string title, int width, int height )
-{
-    std::cout << title << std::endl;
-    for( size_t y = 0; y < height; y++ ) {
-        for( size_t x = 0; x < width; x++ ) {
-            if( image[y * width + x] ) std::cout << "#";
-            else std::cout << ".";
-        }
-        std::cout << std::endl;
-    }
-}
-
-
 bool* parallel_game_of_life( int partition_width, int partition_height, bool* partial_image, int top_rank, int right_rank, int bottom_rank, int left_rank, int steps )
 {
     /*
@@ -44,9 +31,6 @@ bool* parallel_game_of_life( int partition_width, int partition_height, bool* pa
             images[0][(y + 1) * width + (x + 1)] = partial_image[y * partition_width + x];
         }
     }
-
-    // // debug: print the read image
-    // if( rank == 0 ) print_image( images[0], "start image", width, height );
 
     // these are some definitions we need for exchanging data with other ranks
     MPI_Request* top_bottom_send_requests = new MPI_Request[2];
