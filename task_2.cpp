@@ -349,7 +349,7 @@ int main()
     // }
     int iterations = 10;
     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-    parallel_game_of_life( "test_images/riesig.ppm", "test_images/arschlecken.ppm", iterations);
+    parallel_game_of_life( "test_images/spacefiller_input.ppm", "test_images/output.ppm", iterations);
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
     std::cout << "abs difference: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " milliseconds" << std::endl;
     std::cout << "time per iteration: " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() / iterations << "microseconds" << std::endl;
