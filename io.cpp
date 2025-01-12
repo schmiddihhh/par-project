@@ -18,6 +18,8 @@ void read_header( std::string filename, int* width_ptr, int* height_ptr, size_t*
                             MPI_CHAR,
                             MPI_STATUS_IGNORE );
     assert( status == MPI_SUCCESS );
+    status = MPI_File_close( &inputfile );
+    assert( status == MPI_SUCCESS );
 
     // use a regex to extract the values: magic number, width and height of the image, maximum color value
     std::string s(fileheader);
@@ -30,7 +32,6 @@ void read_header( std::string filename, int* width_ptr, int* height_ptr, size_t*
     *max_value_ptr = std::stoi(matches.str(4));
     *header_size_ptr = matches.str(0).length();
 
-    MPI_File_close( &inputfile );
     delete[] fileheader;
 
     return;
@@ -86,6 +87,7 @@ bool* read_partial_image( std::string filename, size_t header_size, int partitio
                             MPI_STATUS_IGNORE );
     assert( status == MPI_SUCCESS );
     status = MPI_File_close( &inputfile );
+    assert( status == MPI_SUCCESS );
 
     // read the image data from the file
     size_t pixel_count = partition_width * partition_height;
@@ -189,15 +191,11 @@ void write_image_header( std::string filename, int width, int height, size_t* he
 
     // write the header to the file
     MPI_File outputfile;
-    int status = MPI_File_open( MPI_COMM_WORLD,
+    int status = MPI_File_open( MPI_COMM_SELF,
                                 filename.c_str(),
                                 MPI_MODE_CREATE | MPI_MODE_WRONLY,
                                 MPI_INFO_NULL,
                                 &outputfile );
-    assert( status == MPI_SUCCESS );
-    status = MPI_File_seek( outputfile,
-                            0,
-                            MPI_SEEK_SET );
     assert( status == MPI_SUCCESS );
     status = MPI_File_write( outputfile,
                              ppm_header.c_str(),

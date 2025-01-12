@@ -27,8 +27,7 @@ void parallel_game_of_life( std::string input_path, std::string output_path, int
     MPI_Comm_size( MPI_COMM_WORLD,
                    &comm_size );
     MPI_Comm_rank( MPI_COMM_WORLD,
-                   &rank );
-    std::cout << "[rank " << rank << "] " << comm_size << " ranks" << std::endl; 
+                   &rank ); 
     assert( (comm_size & (comm_size - 1)) == 0 );     // checks if comm_size is a power of 2
 
     // read the image metadata from the image file
@@ -62,16 +61,13 @@ void parallel_game_of_life( std::string input_path, std::string output_path, int
     int y_end = y_partition_num == y_partitions - 1 ? image_height : (y_partition_num + 1) * avg_partition_height;
     int partition_width = x_end - x_start;      // the value at x_end (or y_end, respectively) is excluded
     int partition_height = y_end - y_start;
-    std::cout << "[rank " << rank << "] coords: (" << x_start << "|" << y_start << ") -> (" << x_end << "|" << y_end << ")" << std::endl;
 
     // find out which processes will calculate the adjacent partitions
     // we need this for communicating with them
     int top_rank = ( comm_size + rank - x_partitions ) % comm_size;
     int bottom_rank = ( rank + x_partitions ) % comm_size;
     int right_rank = y_partition_num * x_partitions + ( x_partition_num + 1 ) % x_partitions;
-    int left_rank = y_partition_num * x_partitions + ( x_partition_num + 3) % x_partitions;
-
-    std::cout << "[rank " << rank << "] (top/bottom/left/right)" << top_rank << " " << bottom_rank << " " << left_rank << " " << right_rank << "\n";
+    int left_rank = y_partition_num * x_partitions + ( x_partition_num + (x_partitions - 1) ) % x_partitions;
 
     // read the part of the image that we need
     bool* partial_image;
@@ -117,10 +113,10 @@ void parallel_game_of_life( std::string input_path, std::string output_path, int
     // we use an MPI vector to make sending columns easier
     MPI_Datatype column;
     MPI_Type_vector( height,
-                        1,
-                        width,
-                        MPI_CXX_BOOL,
-                        &column );
+                     1,
+                     width,
+                     MPI_CXX_BOOL,
+                     &column );
     MPI_Type_commit( &column );
     
     // now we will start the actual calculation time steps
@@ -216,6 +212,7 @@ void parallel_game_of_life( std::string input_path, std::string output_path, int
 
         // wait for all receives to complete
         status = MPI_Waitall( 2, left_right_recv_requests, MPI_STATUSES_IGNORE );
+        assert( status == MPI_SUCCESS );
 
         // now apply the stencil operation to all grid points
         for( int y = 1; y < height - 1; y++ )
@@ -235,11 +232,22 @@ void parallel_game_of_life( std::string input_path, std::string output_path, int
     }
 
     // finally, we have to write the result to the given output path
-    // rank 0 writes the image header
-    write_image_header( output_path,
-                        image_width,
-                        image_height,
-                        &header_size );
+    // rank 0 writes the image header and broadcasts its size to all other processes
+    // (all processes need this size to calculate the offset to write at)
+    if( rank == 0 )
+    {
+        write_image_header( output_path,
+                            image_width,
+                            image_height,
+                            &header_size );
+    }
+
+    int status = MPI_Bcast( &header_size,
+                            1,
+                            MPI_INT,
+                            0,
+                            MPI_COMM_WORLD );
+    assert( status == MPI_SUCCESS );
 
     bool* calc_result = images[steps % 2];
     for( int y = 0; y < partition_height; y++ )
@@ -270,12 +278,12 @@ void parallel_game_of_life( std::string input_path, std::string output_path, int
 }
 
 
-void run_test( std::string testname, std::string input_file, std::string expected_output_file, int time_steps, bool debug_print = false )
+void run_test( std::string testname, std::string input_file, std::string output_file, std::string expected_output_file, int time_steps, bool debug_print = false )
 {
     std::cout << "starting test: " << testname << std::endl;
 
     // read the test files
-    bool* input, * expected_outcome;
+    bool* input, * output, * expected_outcome;
     int width, height;
     input = read_file(input_file, &width, &height);
     expected_outcome = read_file(expected_output_file, &width, &height);
@@ -287,17 +295,18 @@ void run_test( std::string testname, std::string input_file, std::string expecte
         print_image(expected_outcome, "EXPECTED", width, height);
     }
 
-    // execute the game of life on the input
-    // parallel_game_of_life( input_file, input_file, );
+    // execute the game of life on the input and read the resulting image
+    parallel_game_of_life( input_file, output_file, time_steps );
+    output = read_file( output_file, &width, &height );
 
     // debug: print the resulting image to the console
-    if( debug_print ) print_image(input, "RESULT", width, height);
+    if( debug_print ) print_image(output, "RESULT", width, height);
 
     // compare the result to the expected outcome
     int test_passed = true;
     for( size_t i = 0; i < width * height; i++ )
     {
-        if( ! input[i] == expected_outcome[i] )
+        if( ! output[i] == expected_outcome[i] )
         {
             std::cout << " !!> TEST FAILED: " << testname << std::endl;
             test_passed = false;
@@ -307,6 +316,7 @@ void run_test( std::string testname, std::string input_file, std::string expecte
     if( test_passed ) std::cout << " --> test passed: " << testname << std::endl;
 
     delete[] input;
+    delete[] output;
     delete[] expected_outcome;
 }
 
@@ -316,22 +326,22 @@ void test_game_of_life( bool debug_print = false )
     std::cout << "---- testing the game_of_life function ----" << std::endl;
 
     // test 1: a cell should die if it has less than 2 or more than 3 neighbors
-    run_test("dying cell", "test_images/dying_cell_input.ppm", "test_images/dying_cell_1_step.ppm", 1, debug_print);
+    run_test("dying cell", "test_images/dying_cell_input.ppm", "test_images/test_out.ppm", "test_images/dying_cell_1_step.ppm", 1, debug_print);
 
     // test 2: a cell should stay alive if it has 2 or 3 neighbors
-    run_test("surviving cell", "test_images/surviving_cell_input.ppm", "test_images/surviving_cell_1_step.ppm", 1, debug_print);
+    run_test("surviving cell", "test_images/surviving_cell_input.ppm", "test_images/test_out.ppm", "test_images/surviving_cell_1_step.ppm", 1, debug_print);
 
     // test 3: a cell should resurrect if it has exactly 3 neighbors
-    run_test("resurrecting cell", "test_images/resurrecting_cell_input.ppm", "test_images/resurrecting_cell_1_step.ppm", 1, debug_print);
+    run_test("resurrecting cell", "test_images/resurrecting_cell_input.ppm", "test_images/test_out.ppm", "test_images/resurrecting_cell_1_step.ppm", 1, debug_print);
 
     // test 4: glider
-    run_test("glider", "test_images/glider_input.ppm", "test_images/glider_4_steps.ppm", 4, debug_print);
+    run_test("glider", "test_images/glider_input.ppm", "test_images/test_out.ppm", "test_images/glider_4_steps.ppm", 4, debug_print);
 
     // test 5: periodic boundary (glider goes from bottom right corner to top left corner)
-    run_test("periodic boundary", "test_images/periodic_boundary_input.ppm", "test_images/periodic_boundary_n_steps.ppm", 24, debug_print);
+    run_test("periodic boundary", "test_images/periodic_boundary_input.ppm", "test_images/test_out.ppm", "test_images/periodic_boundary_n_steps.ppm", 24, debug_print);
 
     // test 6: spacefiller
-    run_test("spacefiller", "test_images/spacefiller_input.ppm", "test_images/spacefiller_150_steps.ppm", 150, debug_print);
+    run_test("spacefiller", "test_images/spacefiller_input.ppm", "test_images/test_out.ppm", "test_images/spacefiller_150_steps.ppm", 150, debug_print);
 
     std::cout << "---- finished testing the game_of_life function ----" << std::endl;
 }
@@ -341,13 +351,15 @@ int main()
 {
     MPI_Init(NULL, NULL);
 
+    test_game_of_life();
+
     // for( int i = 0; i < 100; i++ )
     // {
     //     std::string writename = "test_images/arschlecken" + std::to_string(i) + ".ppm";
     //     parallel_game_of_life( "test_images/spacefiller_input.ppm", writename, i);
 
     // }
-    int iterations = 10;
+    int iterations = 100;
     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
     parallel_game_of_life( "test_images/spacefiller_input.ppm", "test_images/output.ppm", iterations);
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
